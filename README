@@ -1,0 +1,59 @@
+--------------------------------------------------------------------------
+                      Readme file for fitpdf
+--------------------------------------------------------------------------
+
+--------------------------------------------------------------------------
+                         Introduction
+--------------------------------------------------------------------------
+fitpdf is a Bash script which can 
+* resize and rescale PDF documents
+* arrange several pages of input PDF on a single output PDF page.
+
+Internally, fitpdf uses pdfLatex to accomplish these functions,
+and optionally Ghostscript for further optimization of the output
+document.
+
+--------------------------------------------------------------------------
+                         Requirements
+--------------------------------------------------------------------------
+In order to run llpdf, you need a system with Bash version at least 4
+and the following software:
+- pdfLatex (provides the 'pdflatex' command)
+- pdfinfo utility, part of Poppler tools (www.poppler.freedesktop.org)
+- [optional]: Ghostscript (used in the optional optimization step).
+
+--------------------------------------------------------------------------
+                         Installation
+--------------------------------------------------------------------------
+Simply drop the fitpdf script in a directory included in your $PATH.
+If needed, give it execution permissions.
+
+--------------------------------------------------------------------------
+                         Usage
+--------------------------------------------------------------------------
+Run the following command in your terminal:
+fitpdf --help
+to obtain detailed usage information. 
+
+--------------------------------------------------------------------------
+                         Author
+--------------------------------------------------------------------------
+fitpdf was originally written by Rafael M. Siejakowski (www.rs-math.net)
+and is currently hosted on GitHub.
+
+--------------------------------------------------------------------------
+                         License information
+--------------------------------------------------------------------------
+fitpdf is licensed under the terms of the GNU GPL license:
+
+This program is free software: you can redistribute it and/or modify
+it under the terms of the GNU General Public License as published by
+the Free Software Foundation, either version 3 of the License, or
+(at your option) any later version.
+
+This program is distributed in the hope that it will be useful,
+but WITHOUT ANY WARRANTY; without even the implied warranty of
+MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+GNU General Public License for more details.
+--------------------------------------------------------------------------
+
