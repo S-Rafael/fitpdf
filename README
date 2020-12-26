@@ -16,7 +16,7 @@ document.
 --------------------------------------------------------------------------
                          Requirements
 --------------------------------------------------------------------------
-In order to run llpdf, you need a system with Bash version at least 4
+In order to run fitpdf, you need a system with Bash version at least 4
 and the following software:
 - pdfLatex (provides the 'pdflatex' command)
 - pdfinfo utility, part of Poppler tools (www.poppler.freedesktop.org)
