@@ -1,0 +1,856 @@
+#!/bin/bash	
+#
+#   fitpdf -- Fit and resize PDF files
+#
+#   Author: Rafael M. Siejakowski
+#   Homepage: https://rs-math.net
+#
+#   This program is free software: you can redistribute it and/or modify
+#   it under the terms of the GNU General Public License as published by
+#   the Free Software Foundation, either version 3 of the License, or
+#   (at your option) any later version.
+#
+#   This program is distributed in the hope that it will be useful,
+#   but WITHOUT ANY WARRANTY; without even the implied warranty of
+#   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#   GNU General Public License for more details.
+#
+#
+#=============== User options ======================================
+#
+#
+# Default way of scaling pages (if command line switch absent)
+DEFAULT_MODE='a'     # Run in aspect-ratio preserving mode by default
+#DEFAULT_MODE='s'     # Run in stretching mode by default
+#
+#
+# Default paper and output settings
+DEFAULT_PAPER='A4'   # Default paper format
+DEFAULT_MARGIN=0     # Default margin width
+DEFAULT_LAYOUT='1x1' # Default placement of pages on output page
+DEFAULT_UNIT='mm'    # Which units to use by default
+DEFAULT_OPTIMIZE=1   # Optimize by default?
+#
+#
+declare -A PAPER_SIZE # Do not touch this!
+#
+# -------------- Paper dimensions -----------------------------------
+#
+# Below are definitions of paper dimensions used by fitpdf.
+# If you need custom paper format, you can add its size
+# to the array PAPER_SIZE.
+# The array key is the name of the paper format to be used
+# on the command line (case insensitive). 
+# The dimensions are in Postscript points (1 inch = 72 points)
+# and written as <width>x<height>.
+#
+PAPER_SIZE["11X17"]="792x1224"
+PAPER_SIZE["Ledger"]="1224x792"
+PAPER_SIZE["Legal"]="612x1008"
+PAPER_SIZE["Letter"]="612x792"
+PAPER_SIZE["archE"]="2592x3456"
+PAPER_SIZE["archD"]="1728x2592"
+PAPER_SIZE["archC"]="1296x1728"
+PAPER_SIZE["archB"]="864x1296"
+PAPER_SIZE["archA"]="648x864"
+PAPER_SIZE["A0"]="2384x3370"
+PAPER_SIZE["A1"]="1684x2384"
+PAPER_SIZE["A2"]="1191x1684"
+PAPER_SIZE["A3"]="842x1191"
+PAPER_SIZE["A4"]="595x842"
+PAPER_SIZE["A5"]="420x595"
+PAPER_SIZE["A6"]="297x420"
+PAPER_SIZE["A7"]="210x297"
+PAPER_SIZE["A8"]="148x210"
+PAPER_SIZE["A9"]="105x148"
+PAPER_SIZE["A10"]="73x105"
+PAPER_SIZE["B0"]="2835x4008"
+PAPER_SIZE["B1"]="2004x2835"
+PAPER_SIZE["B2"]="1417x2004"
+PAPER_SIZE["B3"]="1001x1417"
+PAPER_SIZE["B4"]="709x1001"
+PAPER_SIZE["B5"]="499x709"
+PAPER_SIZE["B6"]="354x499"
+PAPER_SIZE["C0"]="2599x3677"
+PAPER_SIZE["C1"]="1837x2599"
+PAPER_SIZE["C2"]="1298x1837"
+PAPER_SIZE["C3"]="918x1298"
+PAPER_SIZE["C4"]="649x918"
+PAPER_SIZE["C5"]="459x649"
+PAPER_SIZE["C6"]="323x459"
+PAPER_SIZE["Slide"]="100x75"
+PAPER_SIZE["beamer"]="363x272"
+# Add your custom paper below:
+#PAPER_SIZE["leet"]="1337x1337"
+PAPER_SIZE["chr"]="961x541"
+#
+#
+#=================== End of user preferences ========================
+# Do not edit the lines below unless you know what you're doing :)
+#
+# Program starts here
+# Global variables controlling script's behaviour
+declare -a INFILE_CANDIDATES
+OUTFILE='-'
+MODE="$DEFAULT_MODE"
+declare -i VERBOSE=0 FORCING=0
+OPTIMIZE="$DEFAULT_OPTIMIZE"
+declare SEPARATOR_V=0 SEPARATOR_H=0
+declare -i LANDSCAPE=0
+declare LAYOUT="$DEFAULT_LAYOUT"
+declare MARGIN_TOP="$DEFAULT_MARGIN" \
+	MARGIN_LEFT="$DEFAULT_MARGIN" \
+	MARGIN_RIGHT="$DEFAULT_MARGIN" \
+	MARGIN_BOTTOM="$DEFAULT_MARGIN"
+declare SEPARATION_V=0 SEPARATION_H=0
+PAPER_SELECTION="$DEFAULT_PAPER"
+VALID_UNITS=("cm" "mm" "pt" "bp" "dd" "cc" "pc" "in" "sp") 
+# Units ex and em aren't considered valid since
+# they are relative to font size
+
+log=7 # File descriptor for messages
+exec 7>&1 # Redirect to stdout
+#
+#=================== Function definitions ===========================
+#
+#
+### analyse_option()
+# This function analyses a word recursively
+# and searches for letters associated to commandline switches.
+# Global variables are modified accordingly.
+analyse_option()
+{
+	local opt_word="$1"
+	case "${opt_word:0:1}" in
+		a)	MODE='a';;
+		s)	if [[ "${opt_word:0:19}" == "separator-vertical=" ]]; then
+				SEPARATOR_V=${opt_word:19}
+				opt_word=""
+			elif [[ "${opt_word:0:21}" == "separator-horizontal=" ]]; then
+				SEPARATOR_H=${opt_word:21}
+				opt_word=""
+			elif [[ "${opt_word:0:10}" == "separator=" ]]; then
+				SEPARATOR_V=${opt_word:10}
+				SEPARATOR_H=${opt_word:10}
+				opt_word=""
+			else
+				MODE='s'
+			fi;;
+		v)	VERBOSE=1;;
+		f)	FORCING=1;;
+		m)	if [[ "${opt_word:0:11}" == "margin-top=" ]]; then
+				MARGIN_TOP=${opt_word:11}
+				opt_word=""
+			elif [[ "${opt_word:0:14}" == "margin-bottom=" ]]; then
+				MARGIN_BOTTOM=${opt_word:14}
+				opt_word=""
+			elif [[ "${opt_word:0:12}" == "margin-left=" ]]; then
+				MARGIN_LEFT=${opt_word:12}
+				opt_word=""
+			elif [[ "${opt_word:0:13}" == "margin-right=" ]]; then
+				MARGIN_RIGHT=${opt_word:13}
+				opt_word=""
+			elif  [[ "x${opt_word:0:2}" == "xm=" || "x${opt_word:0:7}" == "xmargin=" ]]; then
+				local val=$(echo "${opt_word}" | sed -e 's/m\(argin\)\?=//g')
+				MARGIN_TOP="$val"
+				MARGIN_LEFT="$val"
+				MARGIN_RIGHT="$val"
+				MARGIN_BOTTOM="$val"
+				unset val
+				opt_word=""
+			fi;;
+		l)	if [[ "--${opt_word:0:4}" == "--list" ]]; then
+				MODE='l'
+				opt_word=""
+			elif [[ "--${opt_word:0:7}" == "--layout=" ]]; then
+				LAYOUT="${opt_word:7}"
+				opt_word=""
+			elif [[ "--${opt_word:0:9}" == "--landscape" ]]; then
+				LANDSCAPE=1
+				opt_word=""
+			fi;;
+		n)	if [[ "--${opt_word:0:11}" == "--no-optimize" ]]; then
+				OPTIMIZE=0
+				opt_word=""
+			fi;;
+		o)	if [[ "--${opt_word:0:8}" == "--optimize" ]]; then
+				OPTIMIZE=1
+				opt_word=""
+			fi;;
+		p)	if [[ "x${opt_word:0:2}" == "xp=" || "x${opt_word:0:6}" == "xpaper=" ]]; then
+				PAPER_SELECTION=$(echo "${opt_word}" | sed -e 's/p\(aper\)\?=//g')
+				opt_word=""
+			fi;;
+		h)	if [[ "--${opt_word:0:4}" == "--help" ]]; then
+				MODE='h'
+				opt_word=""
+			fi;;
+	esac
+	if [[ "${#opt_word}" -gt 1 ]];
+	then
+		analyse_option "${opt_word:1}"
+	fi
+}
+# -------------------------------------------------------------------
+#
+### print_help()
+# Prints the help screen (activated by the --help command line param)
+print_help()
+{
+	# Terminal format codes
+	local N="\x1b[0m"
+	local B="\x1b[1m"
+	local U="\x1b[4m"
+	local self="$0"
+	echo -ne "
+${B}fitpdf${N} - convert a PDF file resizing and fitting single/multiple pages.
+
+${U}Usage${N}: $self [OPTIONS] INFILE OUTFILE
+
+${B}fitpdf${N} creates an output PDF file with specified paper size and attempts
+to fit pages of the input PDF file on the output pages, resizing them as
+needed. ${B}fitpdf${N} allows you to arrange multiple input pages on each output
+page (using a grid layout), or to simply convert an existing PDF file to
+a new paper size, while keeping the number and order of pages unchanged.
+${B}fitpdf${N} is suitable for preparing PDF files for printing and for conver-
+ting between paper sizes. It uses ${U}pdfLaTeX${N} to generate its output.
+
+${U}Available options${N}:
+
+      ${B}-s${N}                    Stretching mode. "
+	if [[ "x$DEFAULT_MODE" == "xs" ]]; then echo -ne "${B}(default)${N}"; fi
+	echo -ne "
+                            Each input page is stretched to fit the
+                            usable area (aspect ratio is not preserved).
+
+      ${B}-a${N}                    Aspect-ratio preserving mode. "
+	if [[ "x$DEFAULT_MODE" == "xa" ]]; then echo -ne "${B}(default)${N}"; fi
+	echo -ne "
+                            Input pages are scaled while maintaining
+                            their original aspect ratio.
+
+      ${B}--paper${N}=<pfmt>        Set output paper size. <pfmt> must be one of
+      ${B}-p${N}=<pfmt>             the paper formats known to fitpdf.  To see a
+                            list of available paper formats, use ${B}--list${N}.
+                            The default paper format is $B$DEFAULT_PAPER$N.
+
+      ${B}--list${N}                Display all paper formats which can be used
+                            as arguments for the ${B}-p=${N} (${B}--paper=${N}) option.
+                            New paper formats can be added by editing 
+                            the script's source code.
+
+      ${B}--landscape${N}           Landscape mode. Paper is rotated 90 degrees
+                            from its default 'Portrait' orientation.
+
+      ${B}--margin-top${N}=XX      Set margin widths. These margins are added 
+      ${B}--margin-left${N}=XX     around the area used by input pages on top 
+      ${B}--margin-right${N}=XX    of whatever margins may already be present
+      ${B}--margin-bottom${N}=XX   in the input file.  XX must be either 0 or
+                           a valid distance expression consistsing of       
+                           a non-negative number immediately followed
+                           by a unit symbol. Omitting the unit symbol 
+                           will result in the the default units being
+                           used. The available unit symbols and their
+                           meanings are:
+                           ${B}cm${N} - centimeters,
+                           ${B}mm${N} - milimeters,
+                           ${B}pt${N} - points,
+                           ${B}bp${N} - PostScript points, equal to 1/72 inches,
+                           ${B}dd${N} - Didot points,
+                           ${B}cc${N} - ciceros,
+                           ${B}pc${N} - picas,
+                           ${B}in${N} - inches,
+                           ${B}sp${N} - TeX scaled points, equal to 1/65536 pt.
+                           The default margin size is $DEFAULT_MARGIN. 
+
+      ${B}--margin${N}=XXX         Sets the widths of all margins to XXX.
+      ${B}-m${N}=XXX               Margin specifications are processed in
+                           the order they appear in the command line.
+                           Default margin is ${DEFAULT_MARGIN}.
+
+      ${B}--layout${N}=<c>x<r>     Set layout grid to <c> columns and <r> rows.
+                           Multiple pages of the input PDF file will be
+                           placed on each page of the output file:
+                           <c> in each row and <r> in each column.
+                           For example, a 2x3 layout looks like this:
+                           \u2588 \u2588
+                           \u2588 \u2588        where each \u2588 represents
+                           \u2588 \u2588        a page of the input file.
+                           Default layout is $B$DEFAULT_LAYOUT$N.
+
+      ${B}--separator-vertical${N}=XXX
+                           Specifies the distance between columns in
+                           multi-column layout.
+      ${B}--separator-horizontal${N}=XXX
+                           Specifies the distance between rows in
+                           multi-row layout.
+                           Separator widths should be given in the same
+                           format as margins. Separator widths are only
+                           meaningful if a multi-column or multi-row
+                           layout is used.
+
+      ${B}--separator${N}=XXX      Specifies the width of both vertical and
+                           horizontal separators. Default value is 0.
+
+      ${B}--optimize${N}           Optimizes the output PDF file with the goal
+                           of reducing its size. Requires a ${U}GhostScript${N}
+                           (${U}gs${N}) installation to be present. This option
+                           may considerably lenghten the time needed by
+                           fitpdf to return, but the advantage is small
+                           output file size and better internal organi-
+                           zation of the output PDF."
+	if [[ $DEFAULT_OPTIMIZE -ne 0 ]]; then echo -ne " ${B}(default)${N}"; fi
+	echo -ne "
+
+      ${B}--no-optimize${N}        Do not optimize PDF output."
+	if [[ $DEFAULT_OPTIMIZE -eq 0 ]]; then echo -ne " ${B}(default)${N}"; fi
+	echo -ne "
+
+      ${B}-f${N}                   Force overwrite.  If the specified OUTFILE
+                           exists, it will be overwritten without any
+                           warning displayed to the user.
+
+      ${B}-v${N}                   Verbose mode. The program will print more
+                           messages containing information about its
+                           operation.
+
+      ${B}--help${N}               Displays this help screen.
+
+"
+	exit
+}
+# -------------------------------------------------------------------
+#
+### die()
+# Print the message ($1) and exit with error
+die() 
+{
+	echo -e "$1"
+	exit -1
+}
+# -------------------------------------------------------------------
+#
+### log_v()
+# Print the message ($1) if we are in verbose mode.
+# The function reads the global variable VERBOSE.
+# The message is sent to the file descriptor $2 or
+# to stdout if $2 is empty
+log_v() 
+{
+	if (( $VERBOSE ))
+	then
+		if [[ "x$2" == "x" ]]
+		then
+			echo -e "$1"
+		else
+			echo -e "$1" >&$2
+		fi
+	fi
+}
+# -------------------------------------------------------------------
+#
+### list_papers()
+# Print a list of paper format names available
+# The function reads the global variable $PAPER_SIZE.
+list_papers() 
+{
+	local colwidth=10
+	local cols=3
+	local cur_col=0
+	echo "Available paper formats:"
+	for p in "${!PAPER_SIZE[@]}"
+	do
+		len=${#p}
+		pad=""
+		i=0
+		for ((i=0; i<$colwidth-$len; i++)); do pad=" $pad"; done
+		echo -n "$p$pad"
+		((cur_col++))
+		if [[ $cur_col -eq $cols ]]
+		then
+			cur_col=0
+			echo ""
+		fi
+	done
+	[[ $cur_col -gt 0 ]] && echo ""
+	exit
+}
+# -------------------------------------------------------------------
+#
+### check_dependency()
+# Checks whether the utility program ($1) is found in $PATH
+# and terminates the script if not
+check_dependency()
+{
+	local q=`which $1 2>/dev/null`
+	[[ "x${q:0:1}" == "x/" ]] || die "Utility program $1 not found"
+}
+# -------------------------------------------------------------------
+#
+### assert_fexists()
+# Checks whether the file ($1) exists,
+# otherwise terminates the script with error
+assert_fexists()
+{ 
+	[[ -f "$1" ]] || die "Error: file $1 not found"
+	[[ -r "$1" ]] || die "Error: file $1 not readable"
+}
+# -------------------------------------------------------------------
+#
+### warn_if_exists()
+# Checks whether the file ($1) exists (output overwrite protection).
+# The function reads the global variable FORCING.
+warn_if_exists()
+{ 
+	if [[ -f "$1" ]]
+	then
+		if (( $FORCING ))
+		then
+			log_v "Output file $1 will be overwritten"
+		else
+			echo -n "File $1 exists. Overwrite? [y/N]: "
+			read answer
+			if [ "x${answer:0:1}" != "xy" ]
+			then
+				exit
+			else
+				log_v "Output file $1 will be overwritten"
+			fi
+		fi
+	fi
+}
+# -------------------------------------------------------------------
+#
+### valid_latex_dim()
+# Return 0 or 1 depending on whether the dimension string
+# ($1) is a valid (non-negative) dimension in LaTeX units
+# e.g. "14pt" -->  1
+#      "30foo" --> 0
+valid_latex_dim()
+{
+	local input="$1"
+	printf -v units_concat "\\|%s" ${VALID_UNITS[@]}
+	pattern="^[[:digit:].]*[[:digit:]]\(${units_concat:2}\)\\?\$"
+	match=$(echo "$input" | grep -e "$pattern")
+	if [[ ${#match} -gt 0 ]]
+	then
+		# we need to check whether the part before the
+		# unit is a valid numer, and not, say, ..0.6..
+		# First, we cut out the units
+		number=$(echo "$input" | sed -e "s/[^[:digit:].]//g")
+		# number must be nonempty and the last char musn't be a point
+		len=$(( ${#number} - 1 ))
+		if [[ $len -eq -1 || "x${number:$len:1}" == "x." ]]
+		then
+			echo "0"
+			return
+		fi
+		# if the first char is zero, the following char (if present) must be a point
+		if [[ "x${number:0:1}" == "x0" && ${#number} -gt 1 && "x${number:1:1}" != "x." ]]
+		then
+			echo "0"
+			return
+		fi
+		# Finally, there must be at most one floating point.
+		dots="${number//[^.]}"
+		if [[ ${#dots} -gt 1 ]]
+		then
+			echo "0"
+			return
+		fi
+	else # no match --> some weird-ass stuff was fed.
+		echo "0"
+		return
+	fi
+	echo "1"
+}
+# -------------------------------------------------------------------
+#
+### check_dimension()
+# Find out whether the dimension stored in the variable is
+# valid and exit with error if it isn't.
+# Arguments:
+# $1 -	dimension to validate
+# $2 -	user-friendly name representing what this dimension is
+#	supposed to measure
+check_dimension()
+{
+	local is_valid=$(valid_latex_dim "$1")
+	if [[ $is_valid -eq 0 ]]
+	then
+		echo "Invalid $2: $1"
+		echo "Supported units are: ${VALID_UNITS[@]}"
+		exit -1
+	fi
+}
+# -------------------------------------------------------------------
+#
+### latex_dim2bp()
+# Converts any dimension to bp units (PostScript points)
+# Arguments:
+# $1 -	LaTeX dimension to be converted
+latex_dim2bp()
+{
+	unit=$(echo "$1" | sed -e "s/[[:digit:].]//g")
+	if [[ "O$unit" == "O" ]]
+	then
+		unit="$DEFAULT_UNIT"
+	fi
+	multiplier="0"
+	case "$unit" in
+		bp)	multiplier="1";;
+		pt)	multiplier="(72/72.27)";;
+		mm)	multiplier="(72/25.4)";;
+		cm)	multiplier="(72/2.54)";;
+		in)	multiplier="72";;
+		pc)	multiplier="(6/72.27)";;
+		dd)	multiplier="((1238*72)/(72.27*1157))";;
+		cc)	multiplier="((12*1238*72)/(72.27*1157))";;
+		sp)	multiplier="(65536*72/72.27)";;
+	esac
+	number=$(echo "$1" | sed -e "s/[^[:digit:].]//g")
+	echo "scale=6; $number * $multiplier" | bc
+}
+# -------------------------------------------------------------------
+#
+### get_pdf_pagesize()
+# Returns the page size in the format <w>x<h>R<r>
+# where <w> is width in PostScript points,
+# <h> is height in PostScript points,
+# <r> is rotation.
+# Arguments:
+# $1 -	filename
+# $2 -	page number
+get_pdf_pagesize()
+{
+	info=$(pdfinfo -f $2 -l $2 "$1") # we assume the file is valid
+	sizeline=$(echo "$info" | grep "Page\\( \\)\\+$2 size:")
+	rotline=$(echo "$info" | grep "Page\\( \\)\\+$2 rot:" | sed -e "s/[[:space:]]//g")
+	size="${sizeline#*:}"
+	rot="${rotline#*:}"
+	size_words=( $size )
+	width="${size_words[0]}"
+	height="${size_words[2]}"
+	echo "${width}x${height}R${rot}"
+}
+# -------------------------------------------------------------------
+#
+### get_pdf_pagecount()
+# Returns the number of pages in a PDF file or zero if
+# the file is not a valid PDF.
+# Arguments:
+# $1 -	filename
+get_pdf_pagecount()
+{
+	local count=$(pdfinfo "$1" 2>/dev/null | grep "Pages:" | sed -e "s/[^[:digit:]]//g")
+	if [[ ${#count} -eq 0 ]] # Nothing returned = error
+	then
+		echo '0'
+	else
+		echo "$count"
+	fi
+}
+#
+# -------------------------------------------------------------------
+#
+### get_filesize()
+# Returns the size of a file in bytes or -1 if file doesn't exist.
+# Arguments:
+# $1 -	filename
+get_filesize()
+{
+	if [[ -f "$1" ]]
+	then
+		local duline=$(du -b "$1")
+		local duwords=( $duline )
+		echo "${duwords[0]}"
+	else
+		echo '-1'
+	fi
+}
+#
+#============ Command line parsing and validation ===================
+#
+# Check for the necessary utilities
+checks=("pdflatex" "pdfinfo" "grep" "sed" "bc" "readlink")
+for program in "${checks[@]}"
+do
+	check_dependency $program
+done
+# Read command line
+file_count=0
+for word in "$@"
+do
+	if [[ "x${word:0:1}" == "x-" && "x${word:1:1}" != "x" ]]
+	then # We have a dash (-) followed by something
+		analyse_option "${word:1}"
+	else # Assume it's a file name or piped input/output
+		INFILE_CANDIDATES[$file_count]="$word"
+		((file_count++))
+	fi
+done
+# ------------ Now the command line has been analysed ---------------
+[[ "x$MODE" == "xh" ]] && print_help  # Print help if requested
+[[ "x$MODE" == "xl" ]] && list_papers # Print paper list if requested
+# --- Processing mode - validation stage ----------------------------
+# Validate dimensions
+check_dimension "$MARGIN_TOP" "margin-top"
+check_dimension "$MARGIN_RIGHT" "margin-right"
+check_dimension "$MARGIN_LEFT" "margin-left"
+check_dimension "$MARGIN_RIGHT" "margin-right"
+check_dimension "$SEPARATOR_H" "separator-horizontal"
+check_dimension "$SEPARATOR_V" "separator-vertical"
+# Validate layout
+layout_match=$(echo "$LAYOUT" | grep -e '^\([[:digit:]]\+\)x\([[:digit:]]\+\)$')
+if [[ ${#layout_match} -gt 0 ]]
+then
+	layout_cols=$(echo "${LAYOUT%x*}" | sed -e 's/[^[:digit:]]//g' -e 's/^0*//g')
+	layout_rows=$(echo "${LAYOUT#*x}" | sed -e 's/[^[:digit:]]//g' -e 's/^0*//g')
+	layout_cols=$(( ${layout_cols} ))
+	layout_rows=$(( ${layout_rows} ))
+	if [[ $layout_cols -eq 0 || $layout_rows -eq 0 ]]
+	then
+		die "Wrong layout: $LAYOUT. Zero is not allowed."
+	fi
+else
+	die "Layout specified incorrectly: $LAYOUT. Correct form is e.g. 1x1, 2x3, etc."
+fi
+# Check whether enough files were specified
+[[ "$file_count" -gt 1 ]] || die "Input and output files were not specified correctly.\nFor usage info, run $0 --help"
+OUTFILE="${INFILE_CANDIDATES[1]}"
+ INFILE="${INFILE_CANDIDATES[0]}"
+temp_pdf_name='input.pdf'
+unset INFILE_CANDIDATES file_count
+# Set paper format
+declare -i paper_found=0
+selected="${PAPER_SELECTION,,}" # to lower case
+for p in "${!PAPER_SIZE[@]}"
+do # search array keys matching specified paper
+	if [[ "x$selected" == "x${p,,}" ]]
+	then
+		paper_found=1
+		PAPER_SELECTION="$p"
+		break
+	fi
+done
+# If paper not found, then die.
+[[ $paper_found -eq 0 ]] && die "Could not find definitions for the specified paper format: $PAPER_SELECTION"
+unset paper_found
+# Validate infile argument
+assert_fexists "$INFILE"
+input_pages=$(get_pdf_pagecount "$INFILE")
+[[ "$input_pages" -eq 0 ]] && die "Error: $INFILE does not appear to be a valid PDF file."
+# Validate outfile
+warn_if_exists "$OUTFILE"
+#=============================== PROCESSING =========================
+#
+#-------------- Preparation of processing parameters ----------------
+if (( $LANDSCAPE ))
+then # Assign paper dimensions the other way round
+	paper_h="${PAPER_SIZE[$PAPER_SELECTION]%x*}"
+	paper_w="${PAPER_SIZE[$PAPER_SELECTION]#*x}"
+else # Assign normally
+	paper_w="${PAPER_SIZE[$PAPER_SELECTION]%x*}"
+	paper_h="${PAPER_SIZE[$PAPER_SELECTION]#*x}"
+fi
+# Convert dimensions to bp units
+margin_l=$(latex_dim2bp "$MARGIN_LEFT")
+margin_r=$(latex_dim2bp "$MARGIN_RIGHT")
+margin_t=$(latex_dim2bp "$MARGIN_TOP")
+margin_b=$(latex_dim2bp "$MARGIN_BOTTOM")
+sep_h=$(latex_dim2bp "$SEPARATOR_H")
+sep_v=$(latex_dim2bp "$SEPARATOR_V")
+minibox_w=$(echo "scale=6; ($paper_w - ($margin_r + $margin_l + (($layout_cols - 1)*$sep_v)))/$layout_cols" | bc)
+minibox_h=$(echo "scale=6; ($paper_h - ($margin_t + $margin_b + (($layout_rows - 1)*$sep_h)))/$layout_rows" | bc)
+degenerate=$(echo "scale=0; ($minibox_w <= 0) || ($minibox_h <= 0)" | bc)
+[[ $degenerate -eq 0 ]] || die "Error: margins and separators take the entire page."
+#
+# ========================= Prepare processing directory ============
+#
+old_dir=`pwd` # Record current directory
+latex_dir=$(mktemp -q -d fitpdf-tempdir-XXXXXXXX) # temp. dir for latex mess
+[[ $? -eq 0 ]] || die "Error creating a temporary directory. Ensure write permissions to the current directory."
+#
+#-------------- Generation of TeX code ------------------------------
+#
+generate_tex()
+{	# Print LaTeX preamble
+	lengths_to_zero=( 'parindent' 'baselineskip' 'lineskip' 'parskip' 'parsep' 'topskip' 'topsep' 'partopsep' )
+	echo -ne "\\documentclass{article}\\pagestyle{empty}\n\\usepackage["
+	echo "paperwidth=${paper_w}bp, paperheight=${paper_h}bp,
+		top=${margin_t}bp, left=${margin_l}bp,
+		right=${margin_r}bp, bottom=${margin_b}bp,
+		noheadfoot]{geometry}"
+	for l in ${lengths_to_zero[@]}
+	do
+		echo "\\setlength{\\${l}}{0pt}"
+	done
+	echo '\begin{document}%'
+	current_inpage=1
+	current_outpage=1
+	current_row=1
+	current_col=1
+	while (( $current_inpage <= $input_pages ))
+	do
+		# Horizontal space before minipage
+		if (( $current_col > 1 ))
+		then
+			echo -n "\\hspace{${sep_v}bp}"
+		fi
+		# Calculate page embedding params
+		pageinfo=$(get_pdf_pagesize "$INFILE" $current_inpage)
+		pagedims=${pageinfo%R*} # TODO: Not sure how to handle rotation
+		p_w=${pagedims%x*} # page width
+		p_h=${pagedims#*x} # page height
+		if [[ "x$MODE" == "xs" ]]
+		then # stretching mode
+			fitting="width ${minibox_w}bp height ${minibox_h}bp"
+		else # (aspect ratio)-preserving mode
+			isfat=$(echo "scale=0; ${p_w}*${minibox_h} > ${minibox_w}*${p_h}" | bc)
+			if (( $isfat ))
+			then
+				fitting="width ${minibox_w}bp"
+			else
+				fitting="height ${minibox_h}bp"
+			fi
+		fi
+		# Page embedding code
+		echo -n "\\begin{minipage}[c][${minibox_h}bp][c]{${minibox_w}bp}"
+		echo -n "\\pdfximage ${fitting} page ${current_inpage} {${temp_pdf_name}}"
+		echo '\pdfrefximage\pdflastximage\end{minipage}%'
+		(( current_col++ ))
+		log_v "Mapping input page $current_inpage --> Output page $current_outpage" $log
+		if (( $current_col > $layout_cols ))
+		then
+			current_col=1
+			(( current_row++ ))
+			if (( $current_row > $layout_rows ))
+			then
+				current_row=1
+				# start new page only if there are still pages to embed
+				if (( $current_inpage < $input_pages ))
+				then
+					echo '\newpage%'
+					(( current_outpage++ ))
+				fi
+			else
+				# start new line
+				echo -n "\\\\[${sep_h}bp]"
+			fi
+		fi
+		(( current_inpage++ ))
+	done
+	echo '{}\end{document}'
+}
+#
+# ==================== Main processing command ======================
+#
+absolute_infile=$(readlink -f "$INFILE") # Absolute path to input PDF
+tex_name='source'
+ln -s "$absolute_infile" "$latex_dir/$temp_pdf_name" 1>/dev/null 2>/dev/null
+if [[ $? -ne 0 ]]
+then
+	# failed to create a symlink: perhaps
+	# the filesystem doesn't support them
+	cp "$absolute_infile" "$latex_dir/$temp_pdf_name"
+	[[ $? -eq 0 ]] || die "Fatal error while copying input file!"
+fi
+# Write LaTeX code
+generate_tex > "$latex_dir/${tex_name}.tex"
+pushd "$latex_dir" 1>/dev/null
+log_v "Generating PDF..." $log
+pdflatex -halt-on-error -interaction batchmode "${tex_name}.tex" 1>/dev/null 2>/dev/null
+exit_code=$?
+ret=0
+if [[ $exit_code -eq 0 ]]
+then # latex ran smoothly
+	[[ -f "${tex_name}.pdf" ]] || die "Fatal error: PDF output missing!"
+	tempOut=$( mktemp -q -u --tmpdir="$old_dir" "XXXXXX.pdf.part" )
+	mv -f "${tex_name}.pdf" "$tempOut"
+	popd 1>/dev/null
+	[[ -d "$latex_dir" ]] && rm -rf "$latex_dir"
+	opti_success=0
+	if (( $OPTIMIZE ))
+	then
+		has_gs=`which gs 2>/dev/null`
+		if [[ "x${has_gs:0:1}" == "x/" ]]
+		then # GhostScript found, run it
+			log_v 'Optimizing PDF output...'
+			gs -o "$OUTFILE"				\
+			-sDEVICE=pdfwrite				\
+			-dDEVICEWIDTHPOINTS="$paper_w"			\
+			-dDEVICEHEIGHTPOINTS="$paper_h"			\
+			-dAntiAliasColorImage=false			\
+			-dAntiAliasGrayImage=false			\
+			-dAntiAliasMonoImage=false			\
+			-dAutoFilterColorImages=false			\
+			-dAutoFilterGrayImages=false			\
+			-dDownsampleColorImages=false			\
+			-dDownsampleGrayImages=false			\
+			-dDownsampleMonoImages=false			\
+			-dColorConversionStrategy=/LeaveColorUnchanged	\
+			-dConvertCMYKImagesToRGB=false			\
+			-dConvertImagesToIndexed=false			\
+			-dUCRandBGInfo=/Preserve			\
+			-dPreserveHalftoneInfo=true			\
+			-dPreserveOPIComments=true			\
+			-dPreserveOverprintSettings=true		\
+			-dEncodeColorImages=true			\
+			-dEncodeGrayImages=true				\
+			-dEncodeMonoImages=true				\
+			-dSubsetFonts=true				\
+			-dCompressFonts=true				\
+			-dDetectDuplicateImages=true			\
+			-f "$tempOut"					\
+			1>/dev/null 2>/dev/null
+			if [[ $? -eq 0 && -f "$OUTFILE" ]]
+			then # gs ran smoothly
+				# Check sizes before and after optimization
+				temp_size=$(get_filesize "$tempOut")
+				out_size=$(get_filesize "$OUTFILE")
+				if [[ $temp_size -gt $out_size ]]
+				then # size reduction achieved
+					opti_success=1
+					[[ -f "$tempOut" ]] && rm -f "$tempOut"
+					percentage=$(echo "scale=1; 100*($temp_size - $out_size)/$temp_size" | bc)
+					log_v "Optimization reduced output PDF size by ${percentage}%."
+				else
+					log_v 'Optimization with GhostScript failed to reduce PDF size. Keeping the un-optimized file instead.'
+				fi
+			else # gs had issues
+				echo 'Optimization with gs (GhostScript) failed.'
+				echo 'Output PDF will not be optimized.'
+			fi
+		else
+			echo 'Warning: gs (GhostScript) not found.'
+			echo 'Output PDF will not be optimized.'
+		fi
+	fi
+	if [[ $opti_success -eq 0 ]]
+	then # Either optimization wasn't requested or it failed
+		mv -f "$tempOut" "$OUTFILE"
+	fi
+	log_v "PDF output saved to $OUTFILE"
+else # there was an error in LaTeX
+	ret=1
+	error_msg=""
+	if [[ -f "${tex_name}.log" ]]
+	then
+		error_msg=$(<"${tex_name}.log")
+		popd 1>/dev/null
+		[[ -d "$latex_dir" ]] && rm -rf "$latex_dir"
+		echo 'There was an error during processing with pdfLaTeX.'
+		echo 'No output was generated.'
+		echo 'Details of the error (output from pdfLaTeX):'
+		echo "$error_msg"
+	else
+		popd 1>/dev/null
+		echo 'Unknown pdfLaTeX error'	
+	fi
+fi
+exec 7>&- # Remove fd 7
+exit $ret
+# ===================================================================
+#
+# Done!
+
